@@ -1,0 +1,180 @@
+TRAZER EALISMO, VAI TER BOT QUE VAI ATACAR O MESMO BICHO QUE JÁ TEM BOT ATACANDO.
+VAI TER BOT QUE VAI TER Q IR PRA MAIS LONGE.
+
+VAI TER BOT QUE VAI QUERER ATACAR OUTROS BOTS.
+VAI TER BOT Q VAI CORRER DE MORRER.
+E VAI TER BOT QUE VAI MORRER E/OU REVIDAR. 
+
+TEMOS QUE PENSAR E IMPLEMENTAR TAIS LÓGICAS
+
+
+Aqui está um **Prompt Mestre**. Você pode salvar este texto e usar sempre que iniciar uma nova conversa comigo ou com outra IA.
+
+Ele resume toda a arquitetura, o histórico, as dificuldades técnicas que superamos e onde queremos chegar.
+
+---
+
+### 📋 PROMPT MESTRE: Projeto BrFakeEngine (Kotlin + L2J Java)
+
+**Contexto do Projeto:**
+Estou desenvolvendo o **BrFakeEngine**, um plugin externo escrito em **Kotlin** que controla Fake Players (Bots) dentro de um servidor Lineage 2 Java (**BrProject**).
+
+**Arquitetura do Sistema:**
+
+1. **O Cérebro (Kotlin):** O projeto `BrFakeEngine` gerencia a lógica de decisão (IA), banco de dados e comandos. Ele é agnóstico ao servidor (funciona em qualquer L2J se tiver a ponte).
+2. **O Corpo (Java):** O servidor `BrProject` possui uma ponte (`BrServerBridge.java`) que implementa a interface `IFakeBridge`. É aqui que o Java obedece aos comandos do Kotlin.
+3. **Banco de Dados:** Migramos de XML para **MariaDB**. A tabela `fake_player_manager` guarda ID, classe, e status para garantir persistência (o fake salva itens, xp e status real).
+
+**Histórico e Evolução:**
+
+* **Modelo Antigo (XML):** Antigamente, usávamos classes como `FakePlayerManager` baseadas em templates XML. Eram "manequins" visuais que não salvavam progresso.
+* **Modelo Atual (Database):** Agora usamos `Player.restore(objId)`. Os fakes são "clones" de players reais, com inventário, skills e status reais calculados pelo core.
+
+**Desafios Técnicos Superados (O "Bypass de Rede"):**
+O maior desafio foi fazer o servidor aceitar um player sem conexão de internet (sem socket).
+
+* **Problema:** O servidor desconectava o fake automaticamente ao detectar `Client = null` ou falta de IP.
+* **Solução Atual:** No `BrServerBridge.java`, implementamos uma lógica de **"Client Dummy"**:
+1. Instanciamos um `MMOConnection` e um `GameClient` passando `null` (Bypass de Socket).
+2. Definimos o estado `GameClientState.IN_GAME` manualmente.
+3. Registramos o player no `World`.
+4. Executamos a entrada no mundo (`onPlayerEnter`) de forma controlada ou manual, restaurando HP/MP/CP e forçando pacotes visuais (`CharInfo`, `UserInfo`) para os vizinhos.
+
+
+
+**Objetivos Atuais e Futuros:**
+
+1. **Estabilidade do Spawn:** Garantir que o fake apareça, seja visível, pegue target e não seja desconectado (Concluído/Em testes).
+2. **IA de Movimento:** Fazer o fake andar usando o `GeoEngine` do servidor.
+3. **IA de Farm:** O fake deve selecionar targets (mobs), atacar, usar skills e pots.
+4. **Comportamento Humano:** Simular chat, PvP, e uso de cidades (Giran).
+
+**Estado Atual do Código:**
+
+* O Kotlin conecta no banco MariaDB e manda spawnar.
+* O Java (`BrServerBridge`) recebe o ID, restaura o player, cria a conexão falsa e insere no mundo.
+* Estamos usando a biblioteca `HikariCP` para o banco e `Coroutines` (no futuro) para a IA.
+
+**Instrução para a IA:**
+Sempre que for gerar código, lembre-se:
+
+* O **Kotlin** decide *O QUE* fazer.
+* O **Java** decide *COMO* fazer (acessando o core do L2J).
+* Não use métodos que exijam conexão de rede real (sockets) no fake.
+
+---
+
+### Como usar este prompt?
+
+Copie e cole o texto acima no início de qualquer nova conversa. Assim, eu (ou qualquer IA) saberei exatamente que não estamos falando de um script simples, mas de um sistema híbrido complexo com Bypass de conexão.
+
+
+=========
+
+
+
+Victor, agora que estabilizamos o código, vou explicar com precisão cirúrgica a arquitetura que construímos. Você tem em mãos um sistema de emulação de IA muito avançado e híbrido.
+
+Aqui está a anatomia completa do projeto BrFakeEngine e como ele parasita (no bom sentido) o BrProject.
+
+1. O Conceito Macro: Arquitetura de "Plugin Injetado"
+Diferente de bots externos (como L2Walker ou Adrenaline) que rodam em outro computador e mandam pacotes de rede, o seu BrFakeEngine roda dentro da memória RAM do servidor.
+
+BrProject (GameServer): É o Hospedeiro. Ele detém o mundo (World), os monstros, a geodata e a lógica principal.
+
+BrFakeEngine (Plugin): É o Hóspede. Ele é compilado em um .jar separado, mas quando o servidor liga, esse jar é carregado e se funde ao processo principal.
+
+Isso significa que o Fake Player tem Latência Zero. Ele não precisa mandar um pacote de rede, esperar chegar no roteador e voltar. Ele chama métodos diretamente na memória do servidor.
+
+2. A Conexão Técnica (Como eles se tocam)
+A conexão acontece em 3 níveis fundamentais:
+
+A. Nível de Compilação (O build.gradle)
+O projeto dos Fakes não sabe quem é L2Skill ou Player por conta própria.
+
+No build.gradle, usamos: compileOnly(files("libs/server.jar")).
+
+Isso diz: "Use as classes do GameServer apenas para ler e compilar, mas não as inclua no jar final, pois elas já estarão lá quando o servidor ligar".
+
+B. Nível de Herança (O "Disfarce")
+Esta é a parte mais genial. O servidor trata todos como Player.
+
+Sua classe: public class FakePlayer extends Player
+
+Para o BrProject, um FakePlayer É um Player. Ele tem HP, MP, Inventário, Clan, tudo igual.
+
+A única diferença é quem controla:
+
+Player Real: Controlado por pacotes de rede (RequestMoveToLocation).
+
+Fake Player: Controlado por um Loop de IA (FakePlayerAI).
+
+C. Nível de Rede (O "Mock")
+O L2J foi feito para desconectar jogadores que não têm um Cliente TCP ligado.
+
+Para enganar o servidor, criamos o FakeGameClient.
+
+Ele finge ser uma conexão Netty, mas não manda dados para lugar nenhum. Ele serve apenas para o servidor não dar "Disconnect" no bot.
+
+3. O Motor Híbrido (A Inovação do seu Projeto)
+Aqui está a complexidade que resolvemos hoje. Você tem uma arquitetura Bilíngue:
+
+A Lógica (Java 21):
+
+Todo o comportamento do bot (Atacar, Curar, Farmar, Andar) está escrito em Java puro.
+
+Exemplo: CombatAI.java, FakePlayer.java.
+
+A Infraestrutura (Kotlin + Coroutines):
+
+Para rodar 500 ou 1.000 bots, usar Threads normais do Java (new Thread()) mataria o servidor (cada thread consome ~1MB de RAM e pesa na CPU).
+
+Nós criamos o CoroutinePool em Kotlin.
+
+O Truque: O Java chama ThreadPool.schedule(). O Wrapper pega esse pedido e entrega para uma Corrotina Kotlin.
+
+Resultado: Milhares de bots compartilham pouquíssimas threads reais. Alta eficiência.
+
+4. O Cérebro (FakePlayerAI) e o Problema da Reflexão
+Como o BrProject (GameServer) e o BrFakeEngine são projetos separados, às vezes as versões mudam.
+
+O servidor espera que a IA seja L2CharacterAI.
+
+O nosso bot tem uma FakePlayerAI.
+
+Se tentarmos forçar a barra, o Java trava. Por isso, no código que te enviei, usamos Reflection:
+
+Java
+
+// Em vez de chamar direto e dar erro de tipo:
+// ai.setIntention(CtrlIntention.ATTACK, target);
+
+// Nós fazemos "na força bruta":
+method.invoke(ai, "ATTACK", target);
+Isso permite que o Bot ordene ao Servidor: "Mova este boneco para X, Y, Z", e o servidor obedece usando a física oficial do jogo (GeoData), garantindo que o bot não atravesse paredes.
+
+5. O Ciclo de Vida (Resumo)
+Boot: O GameServer liga. Ele lê a pasta libs e carrega o FakePlugin.jar.
+
+Init: O FakePlayerManager acorda e inicializa o ThreadPool (Kotlin).
+
+Spawn: Você digita //spawnfake.
+
+Criação: O Manager cria um FakePlayer (Java), dá a ele um FakeGameClient (Mock) e o insere no World.
+
+Loop (Heartbeat):
+
+A cada 1 segundo (configurável), o ThreadPool acorda a CombatAI.
+
+A IA analisa: "Tenho alvo? Estou morrendo? Tem mob perto?".
+
+A IA decide: "Atacar!".
+
+A IA usa Reflection para dizer ao servidor: setIntention(ATTACK).
+
+Ação: O servidor recebe a intenção e faz o boneco dar dano, consumir Soulshot e dropar itens, exatamente como um player real.
+
+É um sistema complexo, mas extremamente poderoso e, agora que está compilando, está pronto para escalar.
+
+
+

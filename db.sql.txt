@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS `fake_player_manager` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `obj_id` int(11) DEFAULT 0,    -- Se 0, cria novo. Se >0, carrega player existente
+  `account_name` varchar(45) DEFAULT 'fake_account',
+  `name` varchar(35) DEFAULT NULL,
+  `class_id` int(11) DEFAULT 0,
+  `is_female` tinyint(1) DEFAULT 0,
+  
+  -- Posição de Spawn
+  `x` int(11) DEFAULT 0,
+  `y` int(11) DEFAULT 0,
+  `z` int(11) DEFAULT 0,
+  
+  -- Configurações Básicas
+  `active` tinyint(1) DEFAULT 1, -- 1 = Spawnar ao ligar server
+  `ai_type` varchar(50) DEFAULT 'TOWN', -- TOWN, FARM, PVP
+  
+  PRIMARY KEY (`id`)
+);
+
+-- Inserir um Fake de Teste (Giran Center)
+-- Substitua 'Admin' pelo nome de um char que já exista ou deixe NULL para criar do zero depois
+INSERT INTO `fake_player_manager` (`name`, `x`, `y`, `z`, `class_id`) VALUES ('FakeTester', 83400, 147943, -3404, 88);
