@@ -1,4 +1,0 @@
-Manifest-Version: 1.0
-Main-Class: ext.mods.fakeplayer.Main
-Built-By: Victor Hugo
-
