@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>NEURAL LINK // ACTIVE</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetId = parseInt(urlParams.get('id'));
+        let socket;
+
+        function connect() {
+            socket = new WebSocket("ws://" + window.location.host + "/ws");
+            socket.onopen = () => {
+                logTerminal("SYSTEM", "UPLINK ESTABLISHED.");
+                socket.send("REQUEST_DATA:" + targetId);
+            };
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === "UPDATE" && data.id === targetId) updateUI(data);
+            };
+            socket.onclose = () => setTimeout(connect, 2000);
+        }
+
+        function updateUI(data) {
+            setBar('hp-bar', data.hp, data.maxHp, '#ff3333');
+            setBar('mp-bar', data.mp, data.maxMp, '#00eaff');
+            setBar('cp-bar', data.cp, data.maxCp, '#eaff00');
+            document.getElementById('loc-val').innerText = `${data.x}, ${data.y}, ${data.z}`;
+
+            updateObjBtn(data.objective);
+            setText('state-val', data.brainState);
+            
+            setToggle('lbl-party', data.party);
+            setToggle('lbl-trade', data.trade);
+            setToggle('lbl-chat', data.chat);
+
+            setText('val-courage', data.courage + '%');
+            setText('val-vengeance', data.vengeance + '%');
+            setText('val-farm', data.farm + '%');
+            setText('val-rage', data.rage + '%');
+
+            if (data.log) logTerminal("AI_CORE", data.log);
+        }
+
+        function setBar(id, val, max, color) {
+            const pct = Math.floor((val/max)*100);
+            document.getElementById(id).style.width = pct + "%";
+            document.getElementById(id).style.background = color;
+            document.getElementById(id+'-txt').innerText = `${val} / ${max}`;
+        }
+
+        function updateObjBtn(activeGoal) {
+            ['FARM', 'PVP', 'IDLE', 'ASSIST'].forEach(goal => {
+                const btn = document.getElementById('btn-' + goal);
+                if (goal === activeGoal) btn.classList.add('active');
+                else btn.classList.remove('active');
+            });
+        }
+
+        function setToggle(id, isOn) {
+            const el = document.getElementById(id);
+            el.innerText = isOn ? "ATIVO" : "OFF";
+            el.className = isOn ? "status-text status-on" : "status-text status-off";
+        }
+        
+        function setText(id, txt) { document.getElementById(id).innerText = txt; }
+        function sendCmd(type, key, val) { socket.send(`CMD:${targetId}:${type}:${key}:${val}`); }
+
+        let lastLog = "";
+        function logTerminal(source, msg) {
+            if (msg === lastLog) return;
+            lastLog = msg;
+            const term = document.getElementById('terminal-output');
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            const time = new Date().toLocaleTimeString();
+            let colorClass = 'log-msg';
+            if (msg.includes("ATTACK")) colorClass = 'log-action';
+            if (msg.includes("THINK")) colorClass = 'log-thinking';
+            line.innerHTML = `<span class="log-time mono">[${time}]</span> <span class="mono ${colorClass}">${source} :: ${msg}</span>`;
+            term.appendChild(line);
+            term.scrollTop = term.scrollHeight;
+            if (term.childElementCount > 50) term.removeChild(term.firstChild);
+        }
+
+        window.onload = connect;
+    </script>
+</head>
+<body>
+    <div class="layout">
+        <nav class="sidebar">
+            <div class="nav-item" onclick="window.location='index.html'">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            </div>
+        </nav>
+
+        <main class="main-content">
+            <h1 style="margin-bottom:15px;">HOST NEURAL INTERFACE // <span class="mono" style="color:var(--ww-cyan)">CONNECTED</span></h1>
+            
+            <div class="profile-grid">
+                
+                <div class="panel">
+                    <h2>BIO-METRICS</h2>
+                    <div class="d-row"><span>HP INTEGRITY</span> <span id="hp-bar-txt">0/0</span></div>
+                    <div class="bar-container"><div id="hp-bar" class="bar-fill"></div></div>
+                    
+                    <div class="d-row"><span>MP FLUX</span> <span id="mp-bar-txt">0/0</span></div>
+                    <div class="bar-container"><div id="mp-bar" class="bar-fill"></div></div>
+
+                    <div class="d-row"><span>CP SHIELD</span> <span id="cp-bar-txt">0/0</span></div>
+                    <div class="bar-container"><div id="cp-bar" class="bar-fill"></div></div>
+
+                    <div style="margin-top:20px; border-top:1px solid #333; padding-top:10px;">
+                        <div class="d-row"><span>GEO-LOC</span> <span class="mono" id="loc-val" style="color:var(--ww-cyan)">---</span></div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>FAKE AI BRAIN</h2>
+                    
+                    <div class="brain-section" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span class="section-title">ESTADO MENTAL</span>
+                            <span id="state-val" class="mono" style="font-size:1.2rem; color:var(--success-green);">LOADING</span>
+                        </div>
+                        <button class="btn-obj" style="padding: 5px 15px;" onclick="sendCmd('RESET','ALL',0)">RESET</button>
+                    </div>
+
+                    <div class="brain-section">
+                        <span class="section-title" style="color:var(--warn-yellow)">OBJETIVO ATUAL</span>
+                        <div class="obj-grid">
+                            <button id="btn-FARM" class="btn-obj" onclick="sendCmd('SET_OBJ','FARM',0)">FARM</button>
+                            <button id="btn-PVP" class="btn-obj" onclick="sendCmd('SET_OBJ','PVP',0)">PVP</button>
+                            <button id="btn-IDLE" class="btn-obj" onclick="sendCmd('SET_OBJ','IDLE',0)">IDLE</button>
+                            <button id="btn-ASSIST" class="btn-obj" onclick="sendCmd('SET_OBJ','ASSIST',0)">ASSIST</button>
+                        </div>
+                    </div>
+
+                    <div class="brain-section">
+                        <span class="section-title">INTERACOES SOCIAIS</span>
+                        <div class="toggle-row">
+                            <span>Party Invite:</span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span id="lbl-party" class="status-text status-on">ATIVO</span>
+                                <button class="btn-toggle" onclick="sendCmd('TOGGLE','PARTY',0)">TOGGLE</button>
+                            </div>
+                        </div>
+                        <div class="toggle-row">
+                            <span>Trade Request:</span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span id="lbl-trade" class="status-text status-on">ATIVO</span>
+                                <button class="btn-toggle" onclick="sendCmd('TOGGLE','TRADE',0)">TOGGLE</button>
+                            </div>
+                        </div>
+                        <div class="toggle-row" style="border:none;">
+                            <span>Chat Reply:</span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span id="lbl-chat" class="status-text status-off">OFF</span>
+                                <button class="btn-toggle" onclick="sendCmd('TOGGLE','CHAT',0)">TOGGLE</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="brain-section">
+                        <span class="section-title">PARAMETROS DE REACAO (0-100%)</span>
+                        <div class="param-row">
+                            <span>Coragem:</span>
+                            <div class="ctrl-group">
+                                <span id="val-courage" class="param-val">0%</span>
+                                <button class="btn-step" onclick="sendCmd('PARAM','COURAGE',-5)">-</button>
+                                <button class="btn-step" onclick="sendCmd('PARAM','COURAGE',5)">+</button>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <span>Vinganca:</span>
+                            <div class="ctrl-group">
+                                <span id="val-vengeance" class="param-val">0%</span>
+                                <button class="btn-step" onclick="sendCmd('PARAM','VENGEANCE',-5)">-</button>
+                                <button class="btn-step" onclick="sendCmd('PARAM','VENGEANCE',5)">+</button>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <span>Foco Farm:</span>
+                            <div class="ctrl-group">
+                                <span id="val-farm" class="param-val">0%</span>
+                                <button class="btn-step" onclick="sendCmd('PARAM','FARM',-5)">-</button>
+                                <button class="btn-step" onclick="sendCmd('PARAM','FARM',5)">+</button>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <span>Mult. Raiva:</span>
+                            <div class="ctrl-group">
+                                <span id="val-rage" class="param-val">0%</span>
+                                <button class="btn-step" onclick="sendCmd('PARAM','RAGE',-5)">-</button>
+                                <button class="btn-step" onclick="sendCmd('PARAM','RAGE',5)">+</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel no-pad" style="border:1px solid #333;">
+                    <div style="background:#111; padding:10px; border-bottom:1px solid #333;">
+                        <span class="mono" style="color:var(--ww-cyan)">THINK_AND_ACT.LOG</span>
+                    </div>
+                    <div id="terminal-output" class="terminal">
+                        <div class="log-line"><span class="log-time mono">[SYSTEM]</span> <span class="log-msg">Waiting for Neural Uplink...</span></div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+</body>
+</html>

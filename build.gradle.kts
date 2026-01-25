@@ -9,8 +9,9 @@ plugins {
 group = "ext.mods.fakeplayer"
 version = "3.0-HybridEngine"
 
-// 1. Configuração de Compatibilidade (Igual ao BrProject)
-// Usamos o JDK 25 para compilar, mas geramos bytecode 21 (limite do Kotlin)
+// Apenas o caminho para jogar o JAR final
+val serverLibsPath = "C:/Users/Victor Hugo/Documents/2_8_Brproject_New-main/libs"
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
@@ -27,20 +28,16 @@ repositories {
 }
 
 dependencies {
-    // === REDE & I/O ===
-    implementation("io.netty:netty-all:4.1.100.Final")
-    
-    // === LOGGING ===
-    implementation("org.slf4j:slf4j-api:2.0.7")
-    implementation("ch.qos.logback:logback-classic:1.4.11")
+    // CompileOnly para o servidor (evita crash)
+    compileOnly("io.netty:netty-all:4.1.100.Final")
+    compileOnly("org.slf4j:slf4j-api:2.0.7")
+    compileOnly("ch.qos.logback:logback-classic:1.4.11")
 
-    // === KOTLIN & COROUTINES (Zero GC) ===
+    // Kotlin embutido
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    // Versão alinhada com seu outro projeto
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0") 
-
-    // === PONTE COM O SERVIDOR ===
-    // O BrFakeEngine precisa ler as classes do BrProject para compilar
+    
+    // Core do Servidor
     compileOnly(files("libs/server.jar"))
 }
 
@@ -48,57 +45,70 @@ application {
     mainClass.set("ext.mods.fakeplayer.Main")
 }
 
-// 2. Configuração do Compilador Kotlin
 tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
-        // Kotlin ainda não suporta target 25, então fixamos em 21
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
-        freeCompilerArgs.addAll(
-            "-Xno-call-assertions",
-            "-Xno-param-assertions",
-            "-Xno-receiver-assertions"
-        )
+        freeCompilerArgs.addAll("-Xno-call-assertions", "-Xno-param-assertions", "-Xno-receiver-assertions")
     }
 }
 
-// 3. Configuração do Compilador Java
 tasks.withType<JavaCompile>().configureEach {
-    // AQUI ESTÁ O SEGREDO: Dizemos ao Java 25 para gerar bytecode compatível com 21
-    // Isso resolve o erro "Inconsistent JVM-target compatibility"
     options.release.set(21) 
     options.encoding = "UTF-8"
 }
 
-// 4. Rotina de Build e Distribuição
+// === TAREFA 1: JAR DO PLUGIN (Leve, Embutido) ===
 tasks.jar {
     archiveFileName.set("FakePlugin.jar")
 
     manifest {
-        attributes(
-            "Main-Class" to "ext.mods.fakeplayer.Main",
-            "Built-By" to System.getProperty("user.name")
-        )
+        attributes("Built-By" to System.getProperty("user.name"))
     }
     
-    // Cria o Fat Jar (inclui Netty e Kotlin StdLib dentro do jar)
+    // Inclui classes compiladas + RESOURCES (Onde está o HTML agora!)
+    from(sourceSets.main.get().output)
+    
+    // Inclui dependências embutidas (Kotlin)
     from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     doLast {
-        // 1. Copia para o GameServer (BrProject)
-        // Ajuste este caminho se necessário, baseado na sua estrutura de pastas
+        // Copia apenas o JAR para o servidor
         copy {
             from(archiveFile)
-            into("C:/Users/Victor Hugo/Documents/2_8_Brproject_New-main/libs")
+            into(serverLibsPath)
         }
-        
-        // 2. Copia para teste local (Standalone)
-        copy {
-            from(archiveFile)
-            into("build/libs")
-            rename { "FakeServer.jar" }
-        }
-        
-        println(">> SUCESSO! FakePlugin compilado com Toolchain 25 (Target 21).")
+        println(">> SUCESSO! FakePlugin.jar (Com Dashboard Embutido) copiado.")
     }
+}
+
+// === TAREFA 2: JAR DO CONSOLE (Pesado) ===
+tasks.register<Jar>("buildConsole") {
+    group = "build"
+    archiveFileName.set("FakeServer.jar")
+    
+    manifest {
+        attributes("Main-Class" to "ext.mods.fakeplayer.Main")
+    }
+
+    from(sourceSets.main.get().output)
+    
+    // Inclui Netty para o console funcionar
+    from(configurations.compileClasspath.get()
+        .filter { it.name.contains("netty") || it.name.contains("slf4j") || it.name.contains("logback") }
+        .map { if (it.isDirectory) it else zipTree(it) })
+    
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    destinationDirectory.set(layout.buildDirectory.dir("libs"))
+    
+    doLast {
+        println(">> CONSOLE GERADO: build/libs/FakeServer.jar")
+    }
+}
+
+tasks.build {
+    dependsOn("buildConsole")
 }
