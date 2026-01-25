@@ -10,7 +10,9 @@ import ext.mods.api.fake.IFakeBotControl;
 import ext.mods.gameserver.data.manager.AntiFeedManager;
 import ext.mods.gameserver.data.manager.CastleManager;
 import ext.mods.gameserver.data.manager.SevenSignsManager;
+import ext.mods.gameserver.data.xml.RestartPointData; // NOVO: Para achar a cidade
 import ext.mods.gameserver.enums.CabalType;
+import ext.mods.gameserver.enums.RestartType; // NOVO: Enum de respawn
 import ext.mods.gameserver.enums.SealType;
 import ext.mods.gameserver.enums.SiegeSide;
 import ext.mods.gameserver.enums.ZoneId;
@@ -91,6 +93,37 @@ public class FakePlayer extends Player implements IFakeBotControl
 	public Location isFakePostion()
 	{
 		return new Location(getX(), getY(), getZ());
+	}
+	
+	/**
+	 * Tenta encontrar a cidade mais próxima e teleportar.
+	 * Essencial para o ciclo de morte/retorno.
+	 */
+	public void teleportToClosestTown()
+	{
+		Location loc = null;
+		
+		try 
+		{
+			// Tenta usar a lógica nativa
+			loc = ext.mods.gameserver.data.xml.RestartPointData.getInstance().getLocationToTeleport(this, ext.mods.gameserver.enums.RestartType.TOWN);
+		}
+		catch (Throwable e) // Catch Throwable pega Errors (NoClassDefFound) e Exceptions
+		{
+			System.out.println("[FakePlayer] ERRO CRITICO ao buscar cidade: " + e.getMessage());
+			e.printStackTrace();
+		}
+
+		if (loc != null)
+		{
+			teleportToLocation(loc.getX(), loc.getY(), loc.getZ(), 50);
+		}
+		else
+		{
+			// Fallback: Giran Harbor
+			System.out.println("[FakePlayer] Fallback para Giran Harbor ativado.");
+			teleportToLocation(83400, 147943, -3400, 100);
+		}
 	}
 	
 	public void teleportToLocation(int x, int y, int z, int randomOffset)
@@ -612,22 +645,13 @@ public class FakePlayer extends Player implements IFakeBotControl
 	@Override
 	public void doRevive()
 	{
-		super.doRevive(); // Executa toda a limpeza padrão
-		
-		// LÓGICA DE REATIVAÇÃO DA IA
-		/*
-		if (_brain != null && getAI() != null)
-		{
-			// getAI().setIntention(CtrlIntention.AI_INTENTION_ACTIVE); // Reativar quando corrigir imports
-		}
-		*/
+		super.doRevive();
 	}
 
 	// ====================================================================
 	// IMPLEMENTAÇÃO DA API DE CONTROLE (IFakeBotControl)
 	// ====================================================================
 
-	// CORREÇÃO CRÍTICA 1: Implementando getBotTarget para evitar conflito com final getTarget
 	@Override
 	public Creature getBotTarget()
 	{
@@ -639,7 +663,6 @@ public class FakePlayer extends Player implements IFakeBotControl
 		return null;
 	}
 
-	// CORREÇÃO CRÍTICA 2: Implementando setBotTarget
 	@Override
 	public void setBotTarget(Creature target)
 	{
@@ -647,7 +670,7 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public void movePawnTo(int x, int y, int z) 
+	public void movePawnTo(int x, int y, int z)
 	{
 		Location dest = new Location(x, y, z);
 		if (getAI() != null)
@@ -655,7 +678,7 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public void moveToLocation(Location loc, int offset) 
+	public void moveToLocation(Location loc, int offset)
 	{
 		if (loc != null && getAI() != null)
 		{
@@ -664,9 +687,8 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public void stopMove() 
+	public void stopMove()
 	{
-		// CORREÇÃO CRÍTICA 3: abortCast não existe, usando getCast().stop()
 		if (getCast() != null)
 			getCast().stop();
 		
@@ -675,12 +697,11 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public void castSpell(L2Skill skill, Creature target) 
+	public void castSpell(L2Skill skill, Creature target)
 	{
 		if (skill == null || target == null)
 			return;
 		
-		// Reutiliza a lógica de validação existente
 		if (!checkUseMagicConditions(skill, true, false))
 			return;
 		
@@ -695,7 +716,7 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public void useItem(int itemId) 
+	public void useItem(int itemId)
 	{
 		ItemInstance item = getInventory().getItemByItemId(itemId);
 		if (item != null)
@@ -709,9 +730,8 @@ public class FakePlayer extends Player implements IFakeBotControl
 	}
 
 	@Override
-	public boolean checkCondition(L2Skill skill, boolean forceUse) 
+	public boolean checkCondition(L2Skill skill, boolean forceUse)
 	{
 		return checkUseMagicConditions(skill, forceUse, false);
 	}
-	
 }

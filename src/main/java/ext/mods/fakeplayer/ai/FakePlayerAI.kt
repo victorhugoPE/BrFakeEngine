@@ -23,14 +23,10 @@ import ext.mods.gameserver.skills.L2Skill
 import java.util.ArrayList
 
 /**
- * CÉREBRO BASE - OTIMIZADO EM KOTLIN
- * * Performance:
- * - Substituído Streams por Loops diretos (Zero-GC).
- * - Algoritmo de busca de alvo O(n) sem alocação de lista.
- * - Null Safety nativo.
+ * CÉREBRO BASE - OTIMIZADO EM KOTLIN (v4.2 - Final Stable)
+ * Inclui correção de Ciclo de Morte, Logs de Cenário e Otimizações de Memória.
  */
 abstract class FakePlayerAI(
-    // @JvmField expõe como campo público pro Java (sem get/set) para compatibilidade com subclasses
     @JvmField protected val _fakePlayer: FakePlayer
 ) {
 
@@ -53,30 +49,58 @@ abstract class FakePlayerAI(
         _lastFarmLocation = _fakePlayer.position.clone()
     }
 
+    // =========================================================
+    // LÓGICA MESTRA (GATEKEEPER)
+    // =========================================================
+    
+    /**
+     * Este método agora é OPEN (não abstract).
+     * Ele intercepta a morte antes que a IA de Combate (Java) tente rodar.
+     */
+    open fun thinkAndAct() {
+        // 1. Prioridade Máxima: Morte
+        if (_fakePlayer.isDead) {
+            handleDeath()
+            // Trava o pensamento para que subclasses não tentem targetar/atacar
+            _isBusyThinking = true 
+            return
+        }
+        
+        // 2. Se estiver viajando ou ocupado com cenário, não faz nada
+        if (_isBusyThinking) return
+    }
+
     // ==========================================
-    // LÓGICA DE MORTE (Safe & Clean)
+    // CENÁRIO DE MORTE REALISTA (Debugável)
     // ==========================================
     
     protected fun handleDeath() {
-        if (_controls.isDead) {
-            if (!isDeadProcessing) {
-                isDeadProcessing = true
-                startDeathScenario()
-            }
+        // Segurança: Se reviveu magicamente, libera a IA
+        if (!_controls.isDead) {
+            isDeadProcessing = false
+            _isBusyThinking = false
             return
         }
 
-        // Atualiza save point se estiver parado e seguro
-        if (!_fakePlayer.isInCombat && !_controls.isMoving) {
+        // Se já está no meio do processo, aguarda
+        if (isDeadProcessing) return
+
+        isDeadProcessing = true
+
+        // Salva o spot (apenas se não morreu dentro de uma cidade/paz)
+        if (!_fakePlayer.isInsideZone(ZoneId.PEACE)) {
             _lastFarmLocation = _fakePlayer.position.clone()
         }
 
-        isDeadProcessing = false
+        startDeathScenario()
     }
 
     private fun startDeathScenario() {
         val mgr = ArchetypeManager.getInstance()
+        // Delay 1: Tempo morto no chão ("To Village")
         val delay = Rnd.get(mgr.deathDelayMin, mgr.deathDelayMax).toLong()
+
+        println("[FakeAI] ${_fakePlayer.name} MORREU. Aguardando ${delay}s no chão.")
 
         ThreadPool.schedule({
             if (_fakePlayer.isOnline) toVillageStep()
@@ -84,53 +108,93 @@ abstract class FakePlayerAI(
     }
 
     private fun toVillageStep() {
-        _fakePlayer.doRevive()
-        
-        val mgr = ArchetypeManager.getInstance()
-        val restTime = Rnd.get(mgr.townRestMin, mgr.townRestMax).toLong()
+        if (!_fakePlayer.isOnline) return
 
-        // Usando method reference do Kotlin
-        ThreadPool.schedule(this::returnToSpotStep, restTime * 1000L)
+        println("[FakeAI] ${_fakePlayer.name} clicou 'To Village'. Teleportando...")
+
+        // 1. AÇÃO CRÍTICA: Teleporta para a cidade AINDA MORTO
+        // Isso evita loops de reviver e morrer para mobs agressivos
+        _fakePlayer.teleportToClosestTown()
+
+        // 2. Aguarda Loading Screen (Simulação)
+        ThreadPool.schedule({
+            if (_fakePlayer.isOnline) {
+                // 3. Agora sim: Revive e Cura Total
+                _fakePlayer.doRevive()
+                _fakePlayer.heal() 
+                
+                // Limpa flags de combate residuais
+                _controls.stopMove()
+                _controls.botTarget = null
+                
+                // Delay 2: Descanso na Cidade (Buffs/Shop)
+                val mgr = ArchetypeManager.getInstance()
+                val restTime = Rnd.get(mgr.townRestMin, mgr.townRestMax).toLong()
+                
+                println("[FakeAI] ${_fakePlayer.name} reviveu na cidade. Descansando por ${restTime}s.")
+                
+                ThreadPool.schedule(this::returnToSpotStep, restTime * 1000L)
+            }
+        }, 3000L) // 3s de loading fictício
     }
 
     private fun returnToSpotStep() {
-        val spot = _lastFarmLocation ?: return
-
-        // Busca GK
-        val gkDrop = TeleportData.getInstance().getNearestTeleportLocation(spot.x, spot.y, spot.z)
-
-        if (gkDrop != null) {
-            val mgr = ArchetypeManager.getInstance()
-            val gkTime = Rnd.get(mgr.gkTalkMin, mgr.gkTalkMax).toLong()
-
-            ThreadPool.schedule({
-                _fakePlayer.teleportTo(gkDrop, 0)
-                
-                val arrivalTime = Rnd.get(mgr.spotArrivalMin, mgr.spotArrivalMax).toLong()
-                
-                ThreadPool.schedule({
-                    // Caminhada final
-                    _controls.moveToLocation(spot, 0)
-                }, arrivalTime * 1000L)
-
-            }, gkTime * 1000L)
-        } else {
-            // Fallback
-            _fakePlayer.teleportTo(spot, 0)
+        // Validações
+        if (!_fakePlayer.isOnline || _fakePlayer.isDead) {
+             isDeadProcessing = false
+             _isBusyThinking = false
+             return
         }
+        
+        val spot = _lastFarmLocation
+        if (spot == null) {
+            println("[FakeAI] ${_fakePlayer.name} sem spot salvo. Ficando na cidade.")
+            isDeadProcessing = false
+            _isBusyThinking = false
+            return
+        }
+
+        // Delay 3: Interação com GK
+        val mgr = ArchetypeManager.getInstance()
+        val gkTime = Rnd.get(mgr.gkTalkMin, mgr.gkTalkMax).toLong()
+        
+        println("[FakeAI] ${_fakePlayer.name} indo para GK. Viajando em ${gkTime}s.")
+
+        ThreadPool.schedule({
+            // Tenta teleporte inteligente via GK
+            val gkDrop = TeleportData.getInstance().getNearestTeleportLocation(spot.x, spot.y, spot.z)
+
+            if (gkDrop != null) {
+                _fakePlayer.teleportTo(gkDrop, 0)
+            } else {
+                // Fallback: Teleporte direto se não houver rota GK
+                _fakePlayer.teleportTo(spot, 0)
+            }
+            
+            // Delay 4: Chegada no Spot (Caminhada final)
+            val arrivalTime = Rnd.get(mgr.spotArrivalMin, mgr.spotArrivalMax).toLong()
+            
+            ThreadPool.schedule({
+                // Ajuste fino de posição
+                _controls.moveToLocation(spot, 0)
+                
+                println("[FakeAI] ${_fakePlayer.name} chegou no spot. FARM ATIVADO.")
+                
+                // LIBERA A IA
+                isDeadProcessing = false
+                _isBusyThinking = false 
+                
+            }, arrivalTime * 1000L)
+
+        }, gkTime * 1000L)
     }
 
     // ==========================================
-    // MÉTODOS DE COMBATE OTIMIZADOS (ZERO GC)
+    // MÉTODOS DE COMBATE (ZERO GC - MANTIDOS)
     // ==========================================
 
-    /**
-     * OTIMIZAÇÃO CRÍTICA:
-     * Substitui o Stream().sorted() do Java.
-     * Faz apenas UMA passagem pela lista e não cria objetos temporários.
-     */
     protected fun tryTargetNearestCreatureByTypeInRadius(creatureClass: Class<out Creature>, radius: Int) {
-        // 1. Validação do alvo atual
+        // Validação do alvo atual
         val currentTarget = _controls.botTarget
         if (currentTarget != null) {
             if (currentTarget.isDead || 
@@ -139,40 +203,31 @@ abstract class FakePlayerAI(
             ) {
                 _controls.botTarget = null
             } else {
-                // Alvo atual ainda é válido, mantém
-                return
+                return // Mantém alvo atual
             }
         }
 
-        // 2. Busca Otimizada (Winner Takes All)
+        // Busca Otimizada (Winner Takes All - Sem Streams)
         val knownList = _fakePlayer.getKnownTypeInRadius(creatureClass, radius)
         if (knownList.isEmpty()) return
 
         var bestTarget: Creature? = null
         var minDistance = Double.MAX_VALUE
 
-        // Loop manual é mais rápido que iterator/stream aqui
         for (obj in knownList) {
             val creature = obj as? Creature ?: continue
 
-            // Filtros rápidos primeiro
             if (creature.isDead) continue
             if (creature is Player && !isAttackablePlayer(creature)) continue
-            
-            // Filtros pesados (GeoEngine) só se passar nos leves
             if (!GeoEngine.getInstance().canSeeTarget(_fakePlayer, creature)) continue
             
-            // Distância (MathUtil otimizado)
             val dist = MathUtil.calculateDistance(_fakePlayer, creature, false)
-            if (dist > radius) continue // Radius check preciso
+            if (dist > radius) continue 
 
-            // GeoEngine de caminho (o mais pesado)
             if (!GeoEngine.getInstance().canMoveToTarget(_fakePlayer.x, _fakePlayer.y, _fakePlayer.z, creature.x, creature.y, creature.z)) continue
 
-            // Lógica de Party/Clan (Evitar KS ou Friendly Fire)
             if (shouldIgnoreTarget(creature)) continue
 
-            // Se chegou aqui, é válido. É o mais perto?
             if (dist < minDistance) {
                 minDistance = dist
                 bestTarget = creature
@@ -184,12 +239,8 @@ abstract class FakePlayerAI(
         }
     }
 
-    /**
-     * Lógica auxiliar para verificar Party/Clan sem alocar Streams
-     */
     private fun shouldIgnoreTarget(target: Creature): Boolean {
-        // Verifica se alguém da minha party/clan já está batendo nele
-        // Essa lógica é cara, então só roda se necessário
+        // Verifica Party/Clan sem alocar Streams
         val players = World.getInstance().players
         for (other in players) {
             if (other == null || other === _fakePlayer) continue
@@ -197,13 +248,13 @@ abstract class FakePlayerAI(
             if (other.target === target) {
                 if (other is FakePlayer) {
                     if (isSamePartyOrClan(_fakePlayer, other)) {
-                        return false // Ally batendo -> Assistir (OK)
+                        return false // Ally batendo -> Assistir
                     }
                 }
-                return true // Inimigo/Random batendo -> Evitar KS (Ignore)
+                return true // Outro batendo -> Ignorar (Anti-KS)
             }
         }
-        return false // Ninguém batendo -> OK
+        return false 
     }
 
     protected fun checkTargetLost(target: WorldObject?): Boolean {
@@ -239,7 +290,6 @@ abstract class FakePlayerAI(
                 _controls.stopMove()
             }
 
-            // O Kotlin faz o cast seguro automaticamente
             if (target is Creature) {
                 _controls.castSpell(skill, target)
             }
@@ -247,18 +297,16 @@ abstract class FakePlayerAI(
     }
 
     protected fun applyDefaultBuffs() {
-        val buffs = getBuffs() ?: return // Null safety
+        val buffs = getBuffs() ?: return 
 
         for (buffInfo in buffs) {
             try {
                 val skillId = buffInfo[0]
                 val level = buffInfo[1]
                 
-                // Verifica se já tem o buff de forma otimizada
                 val hasBuff = _fakePlayer.allEffects.any { it.skill.id == skillId && it.effectType == EffectType.BUFF }
                 
                 if (!hasBuff) {
-                    // Correção aplicada: Chamada explícita de getEffects
                     SkillTable.getInstance().getInfo(skillId, level)?.getEffects(_fakePlayer, _fakePlayer)
                 } 
             } catch (e: Exception) {
@@ -271,7 +319,6 @@ abstract class FakePlayerAI(
         val waypoints = WalkerHolder.getCityWaypoints(townName)
         if (waypoints.isNullOrEmpty()) return null
 
-        // Filtragem simples
         val valid = ArrayList<Location>()
         for (loc in waypoints) {
              if (GeoEngine.getInstance().canMove(fakePlayer.x, fakePlayer.y, fakePlayer.z, loc.x, loc.y, loc.z, null)) {
@@ -282,7 +329,6 @@ abstract class FakePlayerAI(
         return if (valid.isNotEmpty()) {
             valid[Rnd.get(valid.size)]
         } else {
-            // Find min distance
             var best: Location? = null
             var minDist = Double.MAX_VALUE
             for (loc in waypoints) {
@@ -303,11 +349,9 @@ abstract class FakePlayerAI(
     }
     
     // ==========================================
-    // BRIDGE METHODS (CORREÇÃO DE COMPATIBILIDADE JAVA)
+    // BRIDGE METHODS
     // ==========================================
     
-    // Estes métodos são necessários porque o AITask.java chama isBusyThinking()
-    // e o Kotlin por padrão não gerou esse método para a variável _isBusyThinking
     fun isBusyThinking(): Boolean {
         return _isBusyThinking
     }
@@ -316,7 +360,6 @@ abstract class FakePlayerAI(
         _isBusyThinking = thinking
     }
     
-    // Companion Object para métodos estáticos (Utils)
     companion object {
         @JvmStatic
         fun isAttackablePlayer(player: Player): Boolean {
@@ -332,10 +375,7 @@ abstract class FakePlayerAI(
         }
     }
     
-    // Mantido compatibilidade
     protected fun toVillageOnDeath() = handleDeath()
 
-    // Abstract methods
-    abstract fun thinkAndAct()
     protected abstract fun getBuffs(): Array<IntArray>
 }
